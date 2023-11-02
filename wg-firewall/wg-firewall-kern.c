@@ -9,7 +9,7 @@
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
-#include <linux/in.h>
+#include <linux/in.h
 
 #define  DEVICE_NAME "wgfilter"    
 #define  CLASS_NAME  "wg"
@@ -30,10 +30,10 @@ static ssize_t my_write(struct file *, const char *, size_t, loff_t *);
  
 static struct file_operations fops =
 {
-   .open = my_open,
-   .read = my_read,
-   .write = my_write,
-   .release = my_release,
+    .open = my_open,
+    .read = my_read,
+    .write = my_write,
+    .release = my_release,
 };
 
 struct ip_packet_info {
@@ -50,50 +50,51 @@ static unsigned int packet_count;
 
 
 static int wgchar_init(void){
-   printk(KERN_INFO "wgfilter: Initializing the wgfilter LKM\n");
+    printk(KERN_INFO "wgfilter: Initializing the wgfilter LKM\n");
  
-   majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
-   if (majorNumber<0){
-      printk(KERN_ALERT "wgfilter failed to register a major number\n");
-      return majorNumber;
-   }
-   printk(KERN_INFO "wgfilter registered correctly with major number %d\n", majorNumber);
+    majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
+    if (majorNumber<0){
+        printk(KERN_ALERT "wgfilter failed to register a major number\n");
+        return majorNumber;
+    }
+    printk(KERN_INFO "wgfilter registered correctly with major number %d\n", majorNumber);
  
-   wgfilterClass = class_create(THIS_MODULE, CLASS_NAME);
-   if (IS_ERR(wgfilterClass)) {               
-      unregister_chrdev(majorNumber, DEVICE_NAME);
-      printk(KERN_ALERT "Failed to register device class\n");
-      return PTR_ERR(wgfilterClass);         
-   }
-   printk(KERN_INFO "wgfilter device class registered correctly\n");
+    wgfilterClass = class_create(THIS_MODULE, CLASS_NAME);
+    if (IS_ERR(wgfilterClass)) {               
+        unregister_chrdev(majorNumber, DEVICE_NAME);
+        printk(KERN_ALERT "Failed to register device class\n");
+        return PTR_ERR(wgfilterClass);         
+    }
+    
+    printk(KERN_INFO "wgfilter device class registered correctly\n");
  
-   // Register the device driver
-   wgfilterDevice = device_create(wgfilterClass, NULL, MKDEV(majorNumber, 0), NULL, DEVICE_NAME);
-   if (IS_ERR(wgfilterDevice)) {               
-      class_destroy(wgfilterClass);          
-      unregister_chrdev(majorNumber, DEVICE_NAME);
-      printk(KERN_ALERT "Failed to create the device\n");
-      return PTR_ERR(wgfilterDevice);
-   }
-   printk(KERN_INFO "wgfilter device class created correctly\n"); 
-   return 0;
+    // Register the device driver
+    wgfilterDevice = device_create(wgfilterClass, NULL, MKDEV(majorNumber, 0), NULL, DEVICE_NAME);
+    if (IS_ERR(wgfilterDevice)) {               
+        class_destroy(wgfilterClass);          
+        unregister_chrdev(majorNumber, DEVICE_NAME);
+        printk(KERN_ALERT "Failed to create the device\n");
+        return PTR_ERR(wgfilterDevice);
+    }
+    printk(KERN_INFO "wgfilter device class created correctly\n"); 
+    return 0;
 }
 
 static void wgchar_exit(void) {  
-   device_destroy(wgfilterClass, MKDEV(majorNumber, 0));    
-   class_unregister(wgfilterClass);                         
-   class_destroy(wgfilterClass);                            
-   unregister_chrdev(majorNumber, DEVICE_NAME);            
-   printk(KERN_INFO "wgfilter character devices has been successfully unregistered\n");
+    device_destroy(wgfilterClass, MKDEV(majorNumber, 0));    
+    class_unregister(wgfilterClass);                         
+    class_destroy(wgfilterClass);                            
+    unregister_chrdev(majorNumber, DEVICE_NAME);            
+    printk(KERN_INFO "wgfilter character devices has been successfully unregistered\n");
 }
  
 static int my_open(struct inode *inodep, struct file *filep){
-   numberOpens++;
-   printk(KERN_INFO "wgfilter: Device has been opened %d time(s)\n", numberOpens);
-   return 0;
+    numberOpens++;
+    printk(KERN_INFO "wgfilter: Device has been opened %d time(s)\n", numberOpens);
+    return 0;
 }
  
- static ssize_t my_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
+static ssize_t my_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
     int error_count = 0;
     if (dataToSend.sport != 0 && dataToSend.dport != 0) {
         error_count = copy_to_user(buffer, &dataToSend, sizeof(dataToSend));
