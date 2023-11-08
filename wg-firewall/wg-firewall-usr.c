@@ -7,13 +7,20 @@
 
 #define BUFFER_LENGTH 256 
  
-struct ip_packet_info {
+struct packet_data {
+    int type_of_packet;
     unsigned short int sport;
     unsigned short int dport;
     unsigned int src_ip;
     unsigned int dest_ip;
-    
 };
+
+const char* packet_type_name(int type_of_packet) {
+    if (type_of_packet == 6) {
+        return "TCP";
+    }
+    return "IP PACKET";
+}
             
 int main(){
     int ret, fd;
@@ -45,27 +52,30 @@ int main(){
  
     printf("Reading from the device...\n");
    
-    struct ip_packet_info info;
-    memset(&info, 0, sizeof(info)); 
+    struct packet_data pd;
+    memset(&pd, 0, sizeof(pd)); 
     
     while (num_of_packet > 0) {
        sleep(3);  
-       ret = read(fd, &info, sizeof(struct ip_packet_info));
+       ret = read(fd, &pd, sizeof(struct packet_data));
        
        if (ret < 0) {
            perror("Failed to read the message from the device.");
            return errno;
        }
        
-       printf("packet [%d] details :\n sport = %d, dport = %d, ", num_of_packet, info.sport, info.dport);
-       printf("src_ip = %d.%d.%d.%d, ", info.src_ip & 0xFF
-       				    , info.src_ip >> 8 & 0xFF
-       				    , info.src_ip >> 16 & 0xFF
-       				    , info.src_ip >> 24 & 0xFF);
-       printf("dest_ip = %d.%d.%d.%d\n", info.dest_ip & 0xFF
-       				    , info.dest_ip >> 8 & 0xFF
-       				    , info.dest_ip >> 16 & 0xFF
-       				    , info.dest_ip >> 24 & 0xFF);
+       printf("packet [%d] details :\n packet_type = %s, sport = %d, dport = %d, ",
+                                    num_of_packet, packet_type_name(pd.type_of_packet), pd.sport, pd.dport);
+
+       printf("src_ip = %d.%d.%d.%d, ", pd.src_ip & 0xFF, 
+                                        pd.src_ip >> 8 & 0xFF,
+       				                    pd.src_ip >> 16 & 0xFF,
+                                        pd.src_ip >> 24 & 0xFF);
+
+       printf("dest_ip = %d.%d.%d.%d\n", pd.dest_ip & 0xFF,
+       				                    pd.dest_ip >> 8 & 0xFF,
+       				                    pd.dest_ip >> 16 & 0xFF,
+       				                    pd.dest_ip >> 24 & 0xFF);
        				
        --num_of_packet;
    }
