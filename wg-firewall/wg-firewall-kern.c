@@ -11,10 +11,12 @@
 #include <linux/udp.h>
 #include <linux/in.h>
 
-#define  DEVICE_NAME "wgfilter"    
+#define  DEVICE_NAME "wgfilter"  
 #define  CLASS_NAME  "wg"
 
 #define MAX_NODES 10
+#define IP_MAX_LENGTH 50
+#define MAX_MSG_LEN 100000
 
 static int    majorNumber;                  
 static char   message[256] = {0};           
@@ -25,7 +27,9 @@ static struct device* wgfilterDevice = NULL;
 
 static struct nf_hook_ops *nfho = NULL;
 
-static unsigned int num_of_nodes = 0;
+static int num_of_nodes = 0;
+
+static int display_nodes = 0;
 
 static int my_open(struct inode *, struct file *);
 static int my_release(struct inode *, struct file *);
@@ -41,11 +45,11 @@ static struct file_operations fops =
 };
 
 struct packet_data {
-    int type_of_packet;
+    char type_of_packet[10];
     unsigned short int sport;
     unsigned short int dport;
-    unsigned int src_ip;
-    unsigned int dest_ip;
+    char src_ip[IP_MAX_LENGTH];
+    char dest_ip[IP_MAX_LENGTH];
 };
 
 struct ip_packet_info {
@@ -53,18 +57,30 @@ struct ip_packet_info {
     struct packet_data p_data;  
 };
 
-static struct packet_data data_to_store;
+struct user_input {
+    int display_nodes;
+    unsigned int port;
+    char ip[50];
+};
+
+static struct user_input *u_input = NULL;
 static struct packet_data data_to_send;
 static unsigned int packet_count;
+static char msg[MAX_MSG_LEN] = {0};
 
 static LIST_HEAD(pinfo_head);
 
 static void shallow_copy(struct packet_data *dest_data , struct packet_data *src_data) {
-    dest_data->type_of_packet = src_data->type_of_packet;
+    strcpy(dest_data->type_of_packet, src_data->type_of_packet);
+    //dest_data->type_of_packet = src_data->type_of_packet;
+    
     dest_data->sport = src_data->sport;
     dest_data->dport = src_data->dport;
-    dest_data->src_ip = src_data->src_ip;
-    dest_data->dest_ip = src_data->dest_ip;
+
+    strcpy(dest_data->src_ip, src_data->src_ip);
+    strcpy(dest_data->dest_ip, src_data->dest_ip);
+    //dest_data->src_ip = src_data->src_ip;
+    //dest_data->dest_ip = src_data->dest_ip;
 }
 
 static int add_packet_info_node(struct packet_data pd) {
@@ -72,12 +88,11 @@ static int add_packet_info_node(struct packet_data pd) {
     ++num_of_nodes;
 
     if (num_of_nodes > MAX_NODES) {
-        struct list_head *pinfo_head_ptr = pinfo_head.next;
-        tmp_node = container_of(pinfo_head_ptr, struct ip_packet_info, next);
+        struct ip_packet_info *last_node = list_last_entry(&pinfo_head, struct ip_packet_info, next);
 
-        shallow_copy(&tmp_node->p_data, &pd);
+        list_del(&last_node->next);
 
-        return 0;
+        kfree(last_node);
     }
 
     tmp_node = kmalloc(sizeof(struct ip_packet_info), GFP_KERNEL);
@@ -97,12 +112,12 @@ static int add_packet_info_node(struct packet_data pd) {
 
 static void print_packet_info(void) {
     struct ip_packet_info *cursor, *tmp;
-    printk(KERN_INFO "The packet data is \n");
+    //printk(KERN_INFO "The packet data is \n");
 
     list_for_each_entry_safe(cursor, tmp, &pinfo_head, next) {
         struct ip_packet_info *next_node = list_next_entry_circular(cursor, &pinfo_head, next);
 
-        printk(KERN_INFO "packet_type=%d sport=%d dport=%d src_ip=%pI4 dest_ip=%pI4",
+        printk(KERN_INFO "%5s %10d %10d %10s %10s",
                                     next_node->p_data.type_of_packet,
                                     next_node->p_data.sport,
                                     next_node->p_data.dport,
@@ -170,42 +185,61 @@ static int my_open(struct inode *inodep, struct file *filep){
 }
  
 static ssize_t my_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
-    int error_count = 0;
-    if (list_empty(&pinfo_head)) {
-        printk(KERN_INFO "list is empty\n");
-    } else {
-        error_count = copy_to_user(buffer, &data_to_send, sizeof(data_to_send));
-        //memset(&dataT, 0, sizeof(dataToSend)); 
+
+    ssize_t bytes = len < (MAX_MSG_LEN-(*offset)) ? len : MAX_MSG_LEN-(*offset);
+
+    struct ip_packet_info *next_node;
+    int pos = 0;
+
+    if (!list_empty(&pinfo_head)) {
+        pos += sprintf(msg + pos, "%*s", 10, "Type");
+        pos += sprintf(msg + pos, "%*s", 20, "Src Port");
+        pos += sprintf(msg + pos, "%*s", 20, "Dest Port");
+        pos += sprintf(msg + pos, "%*s", 20, "Src IP");
+        pos += sprintf(msg + pos, "%*s", 20, "Dest IP");
+        pos += sprintf(msg + pos, "\n");
     }
- 
-    if (error_count==0) {            
-        printk(KERN_INFO "wgfilter: Sent message of size %d to the user\n", sizeof(data_to_send));
-        return sizeof(data_to_send); 
-    }
-    else {
-        printk(KERN_INFO "wgfilter: Failed to send %d characters to the user\n", error_count);
-        return -EFAULT;
-    }
+
+    rcu_read_lock();
+
+    list_for_each_entry_rcu(next_node, &pinfo_head, next) {
+        --(u_input->display_nodes);
+        printk("value of node = %d\n", u_input->display_nodes); 
+        if (u_input->display_nodes < 0) {
+            break;
+        }
+        pos += sprintf(msg + pos, "%*s", 10, next_node->p_data.type_of_packet);
+        pos += sprintf(msg + pos, "%*d", 20, next_node->p_data.sport);
+        pos += sprintf(msg + pos, "%*d", 20, next_node->p_data.dport);
+        pos += sprintf(msg + pos, "%*s", 20, next_node->p_data.src_ip);
+        pos += sprintf(msg + pos, "%*s", 20, next_node->p_data.dest_ip);
+        pos += sprintf(msg + pos, "\n");
    
-}
-/*
-static int buffer_to_int(char *buffer) {
-    //printk(KERN_INFO " inside buffer to int function = %s of length = %d\n", buffer, len);
-    unsigned long result;
-    
-    if (kstrtoul(buffer, 10, &result)!= 0) {
-        printk(KERN_INFO "unable to convert to int");
-        return -EINVAL;
+        if (copy_to_user(buffer, msg, bytes)) {
+            printk("unable to copy message\n");
+            rcu_read_unlock();
+            return -EFAULT;
+        }
+
     }
-    return (unsigned int)result;
+    (*offset) += bytes;
+
+    rcu_read_unlock();
+
+    return bytes;
 }
-*/
 
 static ssize_t my_write(struct file *filep, const char __user *buffer, size_t len, loff_t *offset) {
-    sprintf(message, "%s(%zu letters)", buffer, len);   
-    size_of_message = strlen(message);
-   // printk(KERN_INFO "wgfilter : %d\n", buffer_to_int(message));
-    printk(KERN_INFO "wgfilter: Received %zu characters from the user\n", len);
+    //sprintf(message, "%s(%zu letters)", buffer, len);
+
+    copy_from_user(&message, buffer, len);
+    u_input = (struct user_input*)kcalloc(1, sizeof(struct user_input), GFP_KERNEL);
+    
+    sscanf(message, "%d%d%s", &u_input->display_nodes, &u_input->port, u_input->ip);
+    printk("user input is %d %d %s\n", u_input->display_nodes, u_input->port, &u_input->ip);
+    //size_of_message = strlen(message);
+    // printk(KERN_INFO "wgfilter : %d\n", buffer_to_int(message));
+    //printk(KERN_INFO "wgfilter: Received %zu characters from the user\n", len);
     return len;
 }
 
@@ -240,16 +274,28 @@ static unsigned int hfunc(void *priv, struct sk_buff *skb, const struct nf_hook_
         
         tcp_header = (struct tcphdr *)(skb_transport_header(skb));
 
-        data_to_send.type_of_packet = IPPROTO_TCP;
+        snprintf(data_to_send.type_of_packet, 10, "TCP");
         data_to_send.sport = ntohs((unsigned short int)tcp_header->source);
         data_to_send.dport = ntohs((unsigned short int)tcp_header->dest);        
-        data_to_send.src_ip = (unsigned int)iph->saddr;
-        data_to_send.dest_ip = (unsigned int)iph->daddr;
+        snprintf(data_to_send.src_ip, IP_MAX_LENGTH, "%pI4",&iph->saddr);
+        snprintf(data_to_send.dest_ip, IP_MAX_LENGTH, "%pI4",&iph->daddr);
+        //data_to_send.dest_ip = (unsigned int)iph->daddr;
 
         add_packet_info_node(data_to_send);
 
-        print_packet_info();
+       /* if (data_to_send.sport == u_input->port || data_to_send.dport == u_input->port ) {
+            printk(" Dropping packet based on port. The port is either source port or destination port \n");
+            //print_packet_info();
+            return NF_DROP;
+        }
 
+        if (strcmp(data_to_send.dest_ip, u_input->ip) == 0) {
+            printk(" Dropping packet based on dest ip \n");
+            //print_packet_info();
+            return NF_DROP;
+        }*/
+
+        print_packet_info();
         return NF_ACCEPT;
         
     } else if (iph->protocol == IPPROTO_ICMP) {
@@ -265,8 +311,8 @@ static int __init wg_firewall_init(void)
     nfho = (struct nf_hook_ops*)kcalloc(1, sizeof(struct nf_hook_ops), GFP_KERNEL);
     
     nfho->hook  = (nf_hookfn*)hfunc;
-    nfho->hooknum   = NF_INET_PRE_ROUTING;
-    //nfho->hooknum   = NF_INET_LOCAL_IN;
+    //nfho->hooknum   = NF_INET_PRE_ROUTING;
+    nfho->hooknum   = NF_INET_LOCAL_IN;
     //nfho->hooknum   = NF_INET_LOCAL_OUT;
     nfho->pf    = PF_INET;
     nfho->priority  = NF_IP_PRI_FIRST;
@@ -278,8 +324,8 @@ static int __init wg_firewall_init(void)
 
 static void __exit wg_firewall_exit(void)
 {
+    kfree(u_input);
     remove_packet_info_node();
-    wgchar_exit();
     nf_unregister_net_hook(&init_net, nfho);
     printk(KERN_INFO "Goodbye from wg firewall\n\n\n"); 
     kfree(nfho);
