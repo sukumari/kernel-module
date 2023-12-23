@@ -11,6 +11,9 @@
 #include <linux/udp.h>
 #include <linux/in.h>
 
+#include <net/netfilter/nf_conntrack_helper.h>
+
+
 #define  DEVICE_NAME "wgfilter"  
 #define  CLASS_NAME  "wg"
 
@@ -248,7 +251,30 @@ static int my_release(struct inode *inodep, struct file *filep) {
     return 0;
 }
 
+static void process_tcp_packet(struct iphdr *iph, struct tcphdr *tcp_header) {
 
+    snprintf(data_to_send.type_of_packet, 10, "TCP");
+    data_to_send.sport = ntohs((unsigned short int)tcp_header->source);
+    data_to_send.dport = ntohs((unsigned short int)tcp_header->dest);        
+    snprintf(data_to_send.src_ip, IP_MAX_LENGTH, "%pI4",&iph->saddr);
+    snprintf(data_to_send.dest_ip, IP_MAX_LENGTH, "%pI4",&iph->daddr);
+
+    add_packet_info_node(data_to_send);
+
+       /* if (data_to_send.sport == u_input->port || data_to_send.dport == u_input->port ) {
+            printk(" Dropping packet based on port. The port is either source port or destination port \n");
+            //print_packet_info();
+            return NF_DROP;
+        }
+
+        if (strcmp(data_to_send.dest_ip, u_input->ip) == 0) {
+            printk(" Dropping packet based on dest ip \n");
+            //print_packet_info();
+            return NF_DROP;
+        }*/
+
+    print_packet_info();
+}
 
 static unsigned int hfunc(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
 {
@@ -265,6 +291,15 @@ static unsigned int hfunc(void *priv, struct sk_buff *skb, const struct nf_hook_
     }
 
     if (iph->protocol == IPPROTO_TCP) {
+        //printk("Inside the tcp packet");
+        enum ip_conntrack_info ctinfo;
+        struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
+
+        if (!ct) {
+            printk("ct is empty");
+            return NF_ACCEPT;
+        }
+        
         /*
         tcp_header = tcp_hdr(skb);
         unsigned short int sport = ntohs((unsigned short int)tcp_header->source);
@@ -273,34 +308,28 @@ static unsigned int hfunc(void *priv, struct sk_buff *skb, const struct nf_hook_
         */
         
         tcp_header = (struct tcphdr *)(skb_transport_header(skb));
+        //printk("Inside the tcp packet data");
+        if (tcp_header->syn) {
+            printk("received syn packet = %d", ctinfo);
+            if (ctinfo == IP_CT_NEW) {
+                printk("received new TCP packet");
 
-        snprintf(data_to_send.type_of_packet, 10, "TCP");
-        data_to_send.sport = ntohs((unsigned short int)tcp_header->source);
-        data_to_send.dport = ntohs((unsigned short int)tcp_header->dest);        
-        snprintf(data_to_send.src_ip, IP_MAX_LENGTH, "%pI4",&iph->saddr);
-        snprintf(data_to_send.dest_ip, IP_MAX_LENGTH, "%pI4",&iph->daddr);
-        //data_to_send.dest_ip = (unsigned int)iph->daddr;
+                process_tcp_packet(iph, tcp_header);
 
-        add_packet_info_node(data_to_send);
+                return NF_ACCEPT;
 
-       /* if (data_to_send.sport == u_input->port || data_to_send.dport == u_input->port ) {
-            printk(" Dropping packet based on port. The port is either source port or destination port \n");
-            //print_packet_info();
-            return NF_DROP;
-        }
+            } else {
+                if (ctinfo == IP_CT_NEW) {
 
-        if (strcmp(data_to_send.dest_ip, u_input->ip) == 0) {
-            printk(" Dropping packet based on dest ip \n");
-            //print_packet_info();
-            return NF_DROP;
-        }*/
-
-        print_packet_info();
-        return NF_ACCEPT;
-        
+                    return NF_DROP;
+                }
+            }
+        }  
+   
+        return NF_ACCEPT;        
     } else if (iph->protocol == IPPROTO_ICMP) {
         printk(KERN_INFO "wgfilter : Drop ICMP packet\n");
-        return NF_DROP;
+        //return NF_DROP;
     }
     return NF_ACCEPT;
 }
@@ -315,7 +344,7 @@ static int __init wg_firewall_init(void)
     nfho->hooknum   = NF_INET_LOCAL_IN;
     //nfho->hooknum   = NF_INET_LOCAL_OUT;
     nfho->pf    = PF_INET;
-    nfho->priority  = NF_IP_PRI_FIRST;
+    nfho->priority  = NF_IP_PRI_CONNTRACK;
     
     nf_register_net_hook(&init_net, nfho);
     printk(KERN_INFO "wg firewall has been successfully resgisterd\n");
@@ -326,6 +355,7 @@ static void __exit wg_firewall_exit(void)
 {
     kfree(u_input);
     remove_packet_info_node();
+    wgchar_exit();
     nf_unregister_net_hook(&init_net, nfho);
     printk(KERN_INFO "Goodbye from wg firewall\n\n\n"); 
     kfree(nfho);
